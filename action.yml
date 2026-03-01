@@ -1,0 +1,66 @@
+name: "Mark Build"
+description: "Build a Mark project with execution caching and artifact upload"
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  working-directory:
+    description: "Project root directory"
+    default: "."
+  cache-execution:
+    description: "Cache code execution results between runs"
+    default: "true"
+  cache-version:
+    description: "Cache version prefix (bump to invalidate all caches)"
+    default: "1"
+  artifact-name:
+    description: "Name for the uploaded build artifact"
+    default: "mark-build"
+  upload-artifact:
+    description: "Upload build output as a workflow artifact"
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Compute cache key
+      if: inputs.cache-execution == 'true'
+      id: cache-key
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Hash all Markdown files for the cache key.
+        MD_HASH=$(find . -name '*.md' -type f -print0 | sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+        PYTHON_VERSION=$(python3 --version 2>/dev/null | cut -d' ' -f2 || echo "none")
+        KEY="mark-exec-v${{ inputs.cache-version }}-py${PYTHON_VERSION}-${MD_HASH}"
+        echo "key=$KEY" >> "$GITHUB_OUTPUT"
+        echo "Cache key: $KEY"
+
+    - name: Restore execution cache
+      if: inputs.cache-execution == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ inputs.working-directory }}/.mark/cache
+        key: ${{ steps.cache-key.outputs.key }}
+        restore-keys: |
+          mark-exec-v${{ inputs.cache-version }}-
+
+    - name: Build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: mark build
+
+    - name: Save execution cache
+      if: inputs.cache-execution == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ inputs.working-directory }}/.mark/cache
+        key: ${{ steps.cache-key.outputs.key }}
+
+    - name: Upload build artifact
+      if: inputs.upload-artifact == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.working-directory }}/dist
